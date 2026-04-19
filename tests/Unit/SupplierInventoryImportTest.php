@@ -53,4 +53,54 @@ class SupplierInventoryImportTest extends TestCase
 
         $this->assertNull($result);
     }
+
+    public function test_it_reads_brand_from_alternative_brand_heading(): void
+    {
+        $import = new SupplierInventoryImport();
+
+        $result = $import->model([
+            'codigo' => 'A-77',
+            'descripcion' => 'Valvula de prueba',
+            'marca_producto' => 'BRANDX',
+            'cant' => '5',
+        ]);
+
+        $this->assertInstanceOf(TempSupplierInventory::class, $result);
+        $this->assertSame('BRANDX', $result->brand);
+    }
+
+    public function test_it_reads_brand_from_unnamed_column_when_marca_key_is_empty(): void
+    {
+        $import = new SupplierInventoryImport();
+
+        $result = $import->model([
+            'codigo' => '8483N-3P-ENELB',
+            'descripcion' => 'ALTERNADOR AVEO 1.6L',
+            2 => '',
+            3 => 'ENELBROCK',
+            'marca' => '',
+            'cant' => '56',
+            'precio_bs' => 'Bs.61.170,68',
+            7 => '127.5',
+            'precio' => '',
+            9 => '',
+        ]);
+
+        $this->assertInstanceOf(TempSupplierInventory::class, $result);
+        $this->assertSame('ENELBROCK', $result->brand);
+    }
+
+    public function test_it_does_not_throw_missing_code_header_when_code_cell_is_empty(): void
+    {
+        $import = new SupplierInventoryImport();
+
+        $result = $import->model([
+            'codigo' => '',
+            'descripcion' => 'Fila vacia sin codigo',
+            'marca' => 'ACME',
+            'cant' => '3',
+        ]);
+
+        $this->assertNull($result);
+    }
 }

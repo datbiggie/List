@@ -22,7 +22,7 @@ class LocalInventoryImport implements ToModel, WithHeadingRow, WithChunkReading
     public function model(array $row)
     {
         // Validación de cabeceras esperadas (sin frenar el servidor con dd)
-        if (!array_key_exists('codigo', $row) && !array_key_exists('código', $row)) {
+        if (!array_key_exists('codigo', $row) && !array_key_exists('codigo', $row)) {
             throw new RuntimeException(
                 'No se encontró la columna "Código" en el inventario local. Cabeceras detectadas: ' . implode(', ', array_keys($row))
             );

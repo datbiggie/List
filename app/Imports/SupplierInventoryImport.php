@@ -10,19 +10,29 @@ use RuntimeException;
 
 class SupplierInventoryImport implements ToModel, WithHeadingRow, WithChunkReading
 {
+    protected const CODE_KEYS = ['codigo', 'código', 'code', 'sku'];
+    protected const DESCRIPTION_KEYS = ['descripcion', 'descripción', 'description', 'detalle'];
+    protected const BRAND_KEYS = ['marca', 'brand', 'fabricante', 'marca_producto', 'marca del producto'];
+    protected const QUANTITY_KEYS = ['cant', 'stock', 'cantidad', 'existencia', 'inventario'];
+
     public function model(array $row)
     {
         // Validación de cabeceras esperadas (sin usar dd)
-        if (!array_key_exists('codigo', $row) && !array_key_exists('código', $row)) {
+        if (!$this->rowHasAnyKey($row, self::CODE_KEYS)) {
             throw new RuntimeException(
                 'No se encontró la columna "Código" en el inventario proveedor. Cabeceras detectadas: ' . implode(', ', array_keys($row))
             );
         }
 
-        $codigo = $this->normalizeCode($row['codigo'] ?? $row['código'] ?? null);
-        $descripcion = trim((string) ($row['descripcion'] ?? $row['descripción'] ?? ''));
-        $marca = trim((string) ($row['marca'] ?? ''));
-        $cantidad = (int) ($row['cant'] ?? $row['stock'] ?? $row['cantidad'] ?? $row['existencia'] ?? 0);
+        $codigo = $this->normalizeCode($this->rowValue($row, self::CODE_KEYS));
+        $descripcion = trim((string) ($this->rowValue($row, self::DESCRIPTION_KEYS) ?? ''));
+        $marca = trim((string) ($this->rowValue($row, self::BRAND_KEYS) ?? ''));
+
+        if ($marca === '') {
+            $marca = trim((string) ($this->fallbackBrandFromUnnamedColumns($row) ?? ''));
+        }
+
+        $cantidad = (int) ($this->rowValue($row, self::QUANTITY_KEYS) ?? 0);
 
         // Ignorar filas vacías, títulos de sección y filas de cabecera repetida
         if ($codigo === '' || $this->isHeaderLikeRow($row, $codigo, $descripcion)) {
@@ -74,6 +84,85 @@ class SupplierInventoryImport implements ToModel, WithHeadingRow, WithChunkReadi
         }
 
         return trim((string) $value);
+    }
+
+    protected function rowHasAnyKey(array $row, array $candidateKeys): bool
+    {
+        $normalizedRowKeys = [];
+
+        foreach (array_keys($row) as $key) {
+            $normalizedRowKeys[] = $this->normalizeHeaderKey((string) $key);
+        }
+
+        foreach ($candidateKeys as $candidateKey) {
+            if (array_key_exists($candidateKey, $row)) {
+                return true;
+            }
+
+            if (in_array($this->normalizeHeaderKey($candidateKey), $normalizedRowKeys, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function rowValue(array $row, array $candidateKeys): mixed
+    {
+        foreach ($candidateKeys as $key) {
+            if (array_key_exists($key, $row)) {
+                return $row[$key];
+            }
+        }
+
+        $normalizedRow = [];
+
+        foreach ($row as $key => $value) {
+            $normalizedRow[$this->normalizeHeaderKey((string) $key)] = $value;
+        }
+
+        foreach ($candidateKeys as $candidateKey) {
+            $normalizedKey = $this->normalizeHeaderKey($candidateKey);
+
+            if (array_key_exists($normalizedKey, $normalizedRow)) {
+                return $normalizedRow[$normalizedKey];
+            }
+        }
+
+        return null;
+    }
+
+    protected function normalizeHeaderKey(string $value): string
+    {
+        $value = mb_strtoupper(trim($value), 'UTF-8');
+        $value = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value) ?: $value;
+        $value = preg_replace('/[^A-Z0-9]+/', '_', $value) ?? '';
+
+        return trim($value, '_');
+    }
+
+    protected function fallbackBrandFromUnnamedColumns(array $row): ?string
+    {
+        foreach ($row as $key => $value) {
+            $isUnnamedColumn = is_int($key) || ctype_digit((string) $key);
+            if (!$isUnnamedColumn) {
+                continue;
+            }
+
+            $candidate = trim((string) ($value ?? ''));
+            if ($candidate === '') {
+                continue;
+            }
+
+            // Evitamos tomar columnas numéricas/monetarias; marca suele contener letras.
+            if (!preg_match('/[A-Z]/i', $candidate)) {
+                continue;
+            }
+
+            return $candidate;
+        }
+
+        return null;
     }
 
     public function chunkSize(): int

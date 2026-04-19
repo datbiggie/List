@@ -11,6 +11,11 @@ export default defineConfig({
         tailwindcss(),
     ],
     server: {
+        // Permitir el host del túnel
+        allowedHosts: [
+            'hdhtph-ip-206-1-141-125.tunnelmole.net', // Host específico
+            '.tunnelmole.net' // O cualquier subdominio de tunnelmole
+        ],
         watch: {
             ignored: ['**/storage/framework/views/**'],
         },

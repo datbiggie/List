@@ -32,6 +32,7 @@ class ExcelInventoryParser implements InventoryParserInterface
 
         // NUEVO: Fase de automatización silenciosa
         $this->autoResolveExactMatches();
+        $this->autoResolveBrandAwareExactConflicts();
         $this->autoResolveNearCodeMatches();
 
         // Disparamos el evento para que TNTSearch indexe SOLO lo que quedó pendiente
@@ -200,6 +201,162 @@ class ExcelInventoryParser implements InventoryParserInterface
                 ]);
             }
         });
+    }
+
+    /**
+     * Corrige falsos positivos de coincidencia exacta por código cuando la marca del local
+     * sugiere que el match correcto es una variante extendida del código (ej: C1098-ENELBROCK).
+     * Solo aplica cambios cuando hay evidencia fuerte y no ambigua.
+     */
+    protected function autoResolveBrandAwareExactConflicts(): void
+    {
+        $resolvedLocals = TempLocalInventory::query()
+            ->where('is_resolved', true)
+            ->whereNotNull('brand')
+            ->where('brand', '!=', '')
+            ->get(['id', 'code', 'brand']);
+
+        if ($resolvedLocals->isEmpty()) {
+            return;
+        }
+
+        $suppliers = TempSupplierInventory::query()
+            ->get(['code', 'brand', 'quantity']);
+
+        if ($suppliers->isEmpty()) {
+            return;
+        }
+
+        $suppliersByCode = $suppliers->keyBy('code');
+        $reassignments = [];
+        $usedSupplierCodes = [];
+
+        foreach ($resolvedLocals as $local) {
+            $localCode = (string) $local->code;
+            $localBrand = (string) $local->brand;
+
+            if ($localCode === '' || $localBrand === '') {
+                continue;
+            }
+
+            $exactSupplier = $suppliersByCode->get($localCode);
+            if (!$exactSupplier) {
+                continue;
+            }
+
+            // Si la marca coincide razonablemente, mantenemos la resolución exacta.
+            if ($this->brandSimilarity($localBrand, (string) $exactSupplier->brand) >= 65) {
+                continue;
+            }
+
+            $normalizedLocalCode = $this->normalizeComparableCode($localCode);
+            $normalizedLocalBrand = $this->normalizeComparableCode($localBrand);
+
+            if ($normalizedLocalCode === '' || $normalizedLocalBrand === '') {
+                continue;
+            }
+
+            $scoredCandidates = $suppliers
+                ->map(function (TempSupplierInventory $supplier) use ($localCode, $normalizedLocalCode, $normalizedLocalBrand, $localBrand) {
+                    $supplierCode = (string) $supplier->code;
+                    if ($supplierCode === '' || $supplierCode === $localCode) {
+                        return null;
+                    }
+
+                    $normalizedSupplierCode = $this->normalizeComparableCode($supplierCode);
+                    if ($normalizedSupplierCode === '' || !str_starts_with($normalizedSupplierCode, $normalizedLocalCode)) {
+                        return null;
+                    }
+
+                    $brandScore = $this->brandSimilarity($localBrand, (string) $supplier->brand);
+                    $codeContainsBrand = str_contains($normalizedSupplierCode, $normalizedLocalBrand);
+
+                    if ($brandScore < 65 && !$codeContainsBrand) {
+                        return null;
+                    }
+
+                    $score = $brandScore + ($codeContainsBrand ? 25 : 0);
+
+                    return [
+                        'supplier' => $supplier,
+                        'score' => $score,
+                    ];
+                })
+                ->filter()
+                ->values()
+                ->sortByDesc('score')
+                ->values();
+
+            if ($scoredCandidates->isEmpty()) {
+                continue;
+            }
+
+            $top = $scoredCandidates->first();
+            $runnerUp = $scoredCandidates->get(1);
+
+            if (($top['score'] ?? 0) < 80) {
+                continue;
+            }
+
+            if ($runnerUp !== null && (($top['score'] ?? 0) - ($runnerUp['score'] ?? 0)) < 10) {
+                continue;
+            }
+
+            /** @var TempSupplierInventory $winner */
+            $winner = $top['supplier'];
+            $winnerCode = (string) $winner->code;
+
+            if (isset($usedSupplierCodes[$winnerCode])) {
+                continue;
+            }
+
+            $reassignments[] = [
+                'local_id' => (int) $local->id,
+                'local_code' => $localCode,
+                'supplier_code' => $winnerCode,
+                'supplier_quantity' => (int) $winner->quantity,
+            ];
+
+            $usedSupplierCodes[$winnerCode] = true;
+        }
+
+        if (empty($reassignments)) {
+            return;
+        }
+
+        DB::transaction(function () use ($reassignments): void {
+            foreach ($reassignments as $resolution) {
+                TempLocalInventory::query()
+                    ->whereKey($resolution['local_id'])
+                    ->update([
+                        'is_resolved' => true,
+                        'resolved_stock' => $resolution['supplier_quantity'],
+                    ]);
+
+                // Mantener la relación 1-1 entre código local y código proveedor.
+                AliasDictionary::query()->where('local_code', $resolution['local_code'])->delete();
+                AliasDictionary::query()->where('supplier_code', $resolution['supplier_code'])->delete();
+
+                AliasDictionary::query()->create([
+                    'local_code' => $resolution['local_code'],
+                    'supplier_code' => $resolution['supplier_code'],
+                ]);
+            }
+        });
+    }
+
+    protected function brandSimilarity(?string $left, ?string $right): float
+    {
+        $normalizedLeft = $this->normalizeComparableCode((string) $left);
+        $normalizedRight = $this->normalizeComparableCode((string) $right);
+
+        if ($normalizedLeft === '' || $normalizedRight === '') {
+            return 0.0;
+        }
+
+        similar_text($normalizedLeft, $normalizedRight, $percent);
+
+        return $percent;
     }
 
     protected function normalizeComparableCode(string $value): string

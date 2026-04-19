@@ -50,16 +50,6 @@ class ReconciliationBoard extends Component
             return;
         }
 
-        $isAlreadyLinkedToAnotherLocal = AliasDictionary::query()
-            ->where('supplier_code', $supplierProduct->code)
-            ->where('local_code', '!=', $localProduct->code)
-            ->exists();
-
-        if ($isAlreadyLinkedToAnotherLocal) {
-            $this->addError('manualQueries.' . $localId, 'Ese producto proveedor ya está vinculado a otro producto local.');
-            return;
-        }
-
         DB::transaction(function () use ($localProduct, $supplierProduct) {
             // 1. Actualizamos el inventario local
             TempLocalInventory::where('id', $localProduct->id)->update([
@@ -67,10 +57,14 @@ class ReconciliationBoard extends Component
                 'resolved_stock' => (int) $supplierProduct->quantity,
             ]);
 
-            // 2. Guardamos en el diccionario de alias permanentemente (KISS)
-            AliasDictionary::updateOrCreate(
-                ['local_code' => $localProduct->code, 'supplier_code' => $supplierProduct->code]
-            );
+            // 2. La vinculación manual corrige relaciones previas y mantiene 1-1 local<->proveedor
+            AliasDictionary::query()->where('local_code', $localProduct->code)->delete();
+            AliasDictionary::query()->where('supplier_code', $supplierProduct->code)->delete();
+
+            AliasDictionary::query()->create([
+                'local_code' => $localProduct->code,
+                'supplier_code' => $supplierProduct->code,
+            ]);
         });
 
         unset($this->manualQueries[$localId], $this->manualCandidates[$localId]);
@@ -92,6 +86,7 @@ class ReconciliationBoard extends Component
     public function searchSupplierCandidates(int $localId, bool $silent = false): void
     {
         $query = trim((string) ($this->manualQueries[$localId] ?? ''));
+        $compactQuery = $this->compactForSearch($query);
 
         $this->resetErrorBag('manualQueries.' . $localId);
         $this->manualCandidates[$localId] = [];
@@ -111,7 +106,7 @@ class ReconciliationBoard extends Component
         }
 
         $tokens = $this->searchTokens($query);
-        if (empty($tokens)) {
+        if (empty($tokens) && $compactQuery === '') {
             if (!$silent) {
                 $this->addError('manualQueries.' . $localId, 'Ingresa una búsqueda válida para continuar.');
             }
@@ -119,24 +114,31 @@ class ReconciliationBoard extends Component
             return;
         }
 
-        $linkedSupplierCodes = AliasDictionary::query()
-            ->where('local_code', '!=', $localProduct->code)
-            ->pluck('supplier_code')
-            ->all();
-
         $candidates = TempSupplierInventory::query()
-            ->when(!empty($linkedSupplierCodes), fn ($queryBuilder) => $queryBuilder->whereNotIn('code', $linkedSupplierCodes))
-            ->where(function ($queryBuilder) use ($tokens) {
-                foreach ($tokens as $token) {
-                    $likeToken = '%' . $token . '%';
+            ->where(function ($queryBuilder) use ($tokens, $compactQuery) {
+                if (!empty($tokens)) {
+                    $queryBuilder->where(function ($tokensBuilder) use ($tokens) {
+                        foreach ($tokens as $token) {
+                            $likeToken = '%' . $token . '%';
 
-                    $queryBuilder
-                        ->orWhere('code', 'like', $likeToken)
-                        ->orWhere('description', 'like', $likeToken)
-                        ->orWhere('brand', 'like', $likeToken);
+                            $tokensBuilder->where(function ($tokenBuilder) use ($likeToken) {
+                                $tokenBuilder
+                                    ->where('code', 'like', $likeToken)
+                                    ->orWhere('description', 'like', $likeToken)
+                                    ->orWhere('brand', 'like', $likeToken);
+                            });
+                        }
+                    });
+                }
+
+                if ($compactQuery !== '') {
+                    $queryBuilder->orWhereRaw(
+                        "REPLACE(REPLACE(UPPER(COALESCE(code, '')), '-', ''), ' ', '') LIKE ?",
+                        ['%' . $compactQuery . '%']
+                    );
                 }
             })
-            ->limit(25)
+            ->limit(150)
             ->get();
 
         $this->manualCandidates[$localId] = $candidates
@@ -303,6 +305,13 @@ class ReconciliationBoard extends Component
         $parts = preg_split('/\s+/', $normalized) ?: [];
 
         return array_values(array_unique(array_filter($parts, fn (string $token): bool => mb_strlen($token) >= 2)));
+    }
+
+    protected function compactForSearch(string $value): string
+    {
+        $normalized = $this->normalizeForSearch($value);
+
+        return str_replace(' ', '', $normalized);
     }
 
     protected function stringSimilarity(?string $left, ?string $right): float
