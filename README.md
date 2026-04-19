@@ -1,61 +1,198 @@
-import os
+# List - Guia de instalacion y ejecucion
 
-# Definición del contenido del README basado en la arquitectura desarrollada
-readme_content = """# InventorySync | Reconciliación de Inventario B2B
+Este documento explica como instalar y correr el proyecto `List` en otro ordenador desde cero.
 
-## 📌 Visión General
-InventorySync es una aplicación de escritorio de alto rendimiento construida con **Laravel Native** diseñada para automatizar la conciliación de inventarios locales frente a listas de precios de proveedores. El sistema maneja volúmenes de datos de +6,000 registros, aplicando algoritmos de búsqueda difusa (*Fuzzy Matching*) y una base de conocimiento persistente para reducir la carga de trabajo manual.
+## 1. Requisitos
 
-## 🛠 Stack Tecnológico (TALL Stack + Native)
-- **Framework:** Laravel 11+
-- **Frontend:** Livewire 3 (Componentes reactivos)
-- **Estilos:** Tailwind CSS (Sistema de diseño inspirado en Mintlify)
-- **Base de Datos:** SQLite (Local y embebida)
-- **Motor de Búsqueda:** TNTSearch (Full-Text Search nativo)
-- **Procesamiento de Datos:** Laravel Excel (Maatwebsite/Excel) con Chunk Reading
-- **Runtime:** Laravel Native (PHP 8.2+)
+Instala estas herramientas antes de empezar:
 
-## 🏗 Arquitectura y Principios
-El proyecto sigue estrictamente los principios **SOLID**, **DRY** y **KISS**:
+- PHP `8.3` o superior
+- Composer `2.x`
+- Node.js `20+` (recomendado `22 LTS`)
+- npm `10+`
+- Git
 
-### 1. Inversión de Dependencias (DIP)
-Se utilizan contratos (Interfaces) para desacoplar la lógica de negocio de las implementaciones concretas:
-- `InventoryParserInterface`: Define el comportamiento para la ingesta de archivos Excel.
-- `ProductMatcherInterface`: Define el motor de búsqueda y comparación de productos.
+Extensiones de PHP necesarias (minimo):
 
-### 2. Arquitectura Orientada a Eventos
-Para mantener el desacoplamiento, el sistema utiliza eventos de Laravel:
-- `SupplierInventoryImported`: Disparado tras la carga del Excel del proveedor.
-- **Listener:** `BuildSearchIndex` se encarga de regenerar el índice de TNTSearch de forma aislada.
+- `pdo_sqlite`
+- `sqlite3`
+- `mbstring`
+- `openssl`
+- `fileinfo`
+- `tokenizer`
+- `xml`
+- `ctype`
+- `json`
 
-### 3. Capa de Servicios
-Toda la lógica compleja reside en `app/Services`, manteniendo los componentes de Livewire limpios y enfocados únicamente en la gestión del estado de la interfaz.
+## 2. Clonar el repositorio
 
-## 📂 Estructura de Datos (Schema)
-El sistema utiliza tablas temporales para garantizar la integridad de los datos maestros:
-- `temp_local_inventories`: Almacena el inventario cargado por el usuario.
-- `temp_supplier_inventories`: Almacena el catálogo del proveedor para comparación.
-- `alias_dictionaries`: **Base de conocimiento**. Almacena los vínculos manuales aprobados por el usuario para auto-conciliaciones futuras.
+```bash
+git clone https://github.com/datbiggie/List.git
+cd List
+```
 
-## 🚀 Flujo de Trabajo
-1. **Ingesta:** Carga masiva mediante `WithChunkReading` para optimizar el uso de memoria RAM.
-2. **Auto-Match:** Ejecución de queries SQL nativos para resolver coincidencias exactas y alias conocidos en milisegundos.
-3. **Fuzzy Search:** Indexación mediante TNTSearch para encontrar coincidencias difusas (Levenshtein Distance) en productos no resueltos.
-4. **Human-in-the-loop:** Interfaz visual para que el usuario valide o descarte sugerencias de alta confianza.
-5. **Resultado:** Visualización de stock actualizado y exportación.
+## 3. Instalacion rapida (recomendada)
 
-## 🎨 Sistema de Diseño
-Inspirado en **Mintlify**:
-- Fondo: `#ffffff` (Blanco puro)
-- Acentos: `#18E299` (Brand Green)
-- Tipografía: `Inter` (UI) y `Geist Mono` (Datos técnicos/Códigos)
-- Bordes: `rgba(0,0,0,0.05)` (5% opacidad para separación sutil)
-- Radios: `16px` para tarjetas y `9999px` (Pill) para botones/inputs.
+El proyecto ya incluye un script que instala dependencias, crea `.env`, genera `APP_KEY`, corre migraciones y construye frontend.
 
-## ⚙️ Configuración del Entorno
-Para el correcto funcionamiento en desarrollo, asegúrese de tener los siguientes límites en su `php.ini`:
+```bash
+composer run setup
+```
+
+Si ese comando termina sin errores, puedes ir directo a la seccion **7. Ejecutar el proyecto**.
+
+## 4. Instalacion manual paso a paso
+
+Usa esta opcion si prefieres controlar cada paso o depurar errores.
+
+### 4.1 Instalar dependencias PHP
+
+```bash
+composer install
+```
+
+### 4.2 Crear archivo de entorno
+
+```bash
+cp .env.example .env
+```
+
+En Windows PowerShell, si `cp` no funciona:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+### 4.3 Generar clave de Laravel
+
+```bash
+php artisan key:generate
+```
+
+### 4.4 Crear base de datos SQLite
+
+Crea el archivo fisico de SQLite:
+
+```bash
+mkdir -p database
+touch database/database.sqlite
+```
+
+En Windows PowerShell:
+
+```powershell
+if (!(Test-Path database)) { New-Item -ItemType Directory database | Out-Null }
+if (!(Test-Path database/database.sqlite)) { New-Item -ItemType File database/database.sqlite | Out-Null }
+```
+
+### 4.5 Verificar configuracion de `.env` para SQLite
+
+Asegurate de tener estas variables (o equivalentes):
+
+```env
+DB_CONNECTION=sqlite
+DB_DATABASE=database/database.sqlite
+```
+
+Nota: El proyecto ya usa SQLite por defecto en `config/database.php`, pero es buena practica confirmarlo en `.env`.
+
+### 4.6 Ejecutar migraciones
+
+```bash
+php artisan migrate
+```
+
+### 4.7 Instalar dependencias frontend
+
+```bash
+npm install
+```
+
+## 5. Ajustes recomendados de PHP (`php.ini`)
+
+Para carga de archivos grandes y procesos largos:
+
 ```ini
 upload_max_filesize = 50M
 post_max_size = 55M
 memory_limit = 512M
 max_execution_time = 300
+```
+
+Luego reinicia tu terminal o servicio PHP.
+
+## 6. Comandos utiles del proyecto
+
+- Desarrollo completo (servidor + cola + logs + vite):
+
+```bash
+composer run dev
+```
+
+- Solo backend Laravel:
+
+```bash
+php artisan serve
+```
+
+- Solo frontend Vite:
+
+```bash
+npm run dev
+```
+
+- Construccion de assets para produccion:
+
+```bash
+npm run build
+```
+
+- Ejecutar pruebas:
+
+```bash
+composer test
+```
+
+## 7. Ejecutar el proyecto
+
+Opcion simple:
+
+```bash
+composer run dev
+```
+
+Luego abre en tu navegador la URL que muestre `php artisan serve` (normalmente `http://127.0.0.1:8000`).
+
+## 8. Flujo para instalar en otra PC (resumen rapido)
+
+```bash
+git clone https://github.com/datbiggie/List.git
+cd List
+composer run setup
+composer run dev
+```
+
+## 9. Problemas comunes
+
+- Error de SQLite (`could not find driver`):
+    - Activa `pdo_sqlite` y `sqlite3` en `php.ini`.
+- Error con `APP_KEY`:
+    - Ejecuta `php artisan key:generate`.
+- Error de tablas inexistentes:
+    - Ejecuta `php artisan migrate`.
+- Error de frontend:
+    - Ejecuta `npm install` y luego `npm run dev`.
+
+## 10. Produccion (referencia minima)
+
+Para un despliegue basico:
+
+```bash
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+npm install
+npm run build
+php artisan optimize
+```
+
+Si necesitas, puedo generar una segunda version de este README orientada 100% a Windows (PowerShell) o una orientada a Linux (Ubuntu/Debian).

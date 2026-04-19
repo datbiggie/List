@@ -44,7 +44,7 @@ class FinalInventoryTable extends Component
         $query = $this->baseQuery();
 
         // Ordenamos alfabéticamente por defecto
-        $products = $query->orderBy('code', 'asc')->paginate(15);
+        $products = $query->orderBy('code', 'asc')->paginate(20);
 
         return view('livewire.final-inventory-table', [
             'products' => $products

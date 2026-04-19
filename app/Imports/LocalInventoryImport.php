@@ -32,8 +32,8 @@ class LocalInventoryImport implements ToModel, WithHeadingRow, WithChunkReading
         $descripcion = trim((string) ($row['descripción'] ?? $row['descripcion'] ?? ''));
         $marca = trim((string) ($row['marca'] ?? ''));
 
-        // Ignorar filas vacías y filas que son cabeceras repetidas dentro del archivo
-        if ($codigo === '' || $this->isHeaderLikeRow($codigo, $descripcion)) {
+        // Ignorar filas vacías, títulos de sección y filas que son cabeceras repetidas dentro del archivo
+        if ($codigo === '' || $this->isHeaderLikeRow($row, $codigo, $descripcion)) {
             return null;
         }
 
@@ -45,19 +45,27 @@ class LocalInventoryImport implements ToModel, WithHeadingRow, WithChunkReading
         ]);
     }
 
-    protected function isHeaderLikeRow(string $codigo, string $descripcion): bool
+    protected function isHeaderLikeRow(array $row, string $codigo, string $descripcion): bool
     {
         $normalize = static fn (string $text): string => mb_strtoupper(trim($text), 'UTF-8');
 
         $codigoNorm = $normalize($codigo);
         $descripcionNorm = $normalize($descripcion);
+        $rowValuesNorm = $normalize(implode(' ', array_filter(array_map(
+            static fn ($value) => is_scalar($value) || $value === null ? (string) $value : '',
+            $row
+        ))));
 
         $codeHeaders = ['CODIGO', 'CÓDIGO', 'CODE'];
         $descHeaders = ['DESCRIPCION', 'DESCRIPCIÓN', 'DESCRIPTION'];
+        $blockedLabels = ['LISTA DE PRECIOS', 'PRICE LIST'];
 
         return in_array($codigoNorm, $codeHeaders, true)
             || (in_array($codigoNorm, $codeHeaders, true) && in_array($descripcionNorm, $descHeaders, true))
-            || ($codigoNorm === 'CODIGO' && $descripcionNorm === 'DESCRIPCION');
+            || ($codigoNorm === 'CODIGO' && $descripcionNorm === 'DESCRIPCION')
+            || in_array($codigoNorm, $blockedLabels, true)
+            || in_array($descripcionNorm, $blockedLabels, true)
+            || collect($blockedLabels)->contains(fn (string $label) => str_contains($rowValuesNorm, $label));
     }
 
     protected function normalizeCode(mixed $value): string

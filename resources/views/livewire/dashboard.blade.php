@@ -3,7 +3,7 @@
         
         <div class="mb-8 flex flex-col gap-4 md:flex-row md:justify-between md:items-end">
             <div>
-                <h1 class="text-slate-800 font-bold text-3xl md:text-4xl mb-1">
+                <h1 class="text-slate-800 font-bold text-3xl md:text-3xl mb-1">
                     Resumen de Inventario
                 </h1>
                 <p class="text-gray-600 text-base md:text-lg">
